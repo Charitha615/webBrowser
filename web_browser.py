@@ -4,21 +4,85 @@
 import base64
 import os
 import sys
-from PyQt5.QtCore import QUrl
 from PyQt5.QtGui import QFontDatabase, QDesktopServices
 from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEnginePage
 from PyQt5.QtWidgets import QApplication, QMainWindow, QAction, QToolBar, QLineEdit, QStatusBar, QMessageBox, \
-    QFileDialog, QListWidget, QDialog, QVBoxLayout, QListWidgetItem, QAbstractItemView, QPushButton, QLabel
+    QListWidget, QDialog, QVBoxLayout, QListWidgetItem, QAbstractItemView, QPushButton, QLabel, QDesktopWidget
 
 from PyQt5.QtWidgets import QFileDialog, QMessageBox
-from PyQt5.QtCore import QUrl
-from PyQt5.QtGui import QImageReader
-from PyQt5.QtCore import QUrl
+from PyQt5.QtCore import QUrl, QTimer, QEventLoop, Qt
 from pymongo import MongoClient
 from PIL import Image
-# import fitz  # PyMuPDF
+import fitz  # PyMuPDF
+from PyQt5.QtWidgets import QProgressDialog
+
+from PyQt5.QtWidgets import QDialog, QProgressBar, QLabel, QVBoxLayout, QSizePolicy, QPushButton
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 
 
+class LoadingDialog(QDialog):
+    def __init__(self, parent=None):
+        super(LoadingDialog, self).__init__(parent)
+        self.setWindowTitle("Collecting data")
+        self.setGeometry(0, 0, 300, 100)
+        self.setWindowFlags(Qt.Window | Qt.CustomizeWindowHint | Qt.WindowTitleHint | Qt.WindowStaysOnTopHint)
+        self.center()
+
+        self.progress_label = QLabel("Logging in...", self)
+        self.progress_bar = QProgressBar(self)
+        self.progress_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        self.cancel_button = QPushButton("Cancel", self)
+        self.cancel_button.clicked.connect(self.close)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.progress_label)
+        layout.addWidget(self.progress_bar)
+        layout.addWidget(self.cancel_button)
+
+        self.thread = None
+        self.worker = None
+
+    def center(self):
+        frame_geometry = self.frameGeometry()
+        desktop_center = QDesktopWidget().availableGeometry().center()
+        frame_geometry.moveCenter(desktop_center)
+        self.move(frame_geometry.topLeft())
+
+    def set_progress(self, value):
+        self.progress_bar.setValue(value)
+
+    def set_progress_label(self, text):
+        self.progress_label.setText(text)
+
+    def closeEvent(self, event):
+        if self.thread and self.thread.isRunning():
+            self.worker.stop()
+            self.thread.quit()
+            self.thread.wait()
+        event.accept()
+
+
+class Worker(QThread):
+    progress_changed = pyqtSignal(int)
+    label_changed = pyqtSignal(str)
+
+    def __init__(self):
+        super(Worker, self).__init__()
+        self.running = True
+
+    def run(self):
+        # Simulating a time-consuming task
+        for i in range(101):
+            if not self.running:
+                break
+            self.progress_changed.emit(i)
+            self.label_changed.emit(f"Logging in... {i}%")
+            self.msleep(20)
+        self.finished.emit()
+
+    def stop(self):
+        self.running = False
 class RegistrationDialog(QDialog):
     def __init__(self):
         super().__init__()
@@ -79,8 +143,23 @@ class RegistrationDialog(QDialog):
         self.accept()
 
     def login_user(self):
+
         username = self.username_input.text()
         email = self.email_input.text()
+        # self.show_loading_bar()
+
+        progress_dialog = QProgressDialog("Please wait...", None, 0, 0, self)
+        progress_dialog.setWindowModality(Qt.WindowModal)
+        progress_dialog.show()
+
+        # Call your login function in a separate thread or process
+        # For simplicity, let's simulate a delay using QEventLoop
+        loop = QEventLoop()
+        QTimer.singleShot(2000, loop.quit)
+        loop.exec_()
+
+        # Close the progress dialog
+
 
         if not (username and email):
             QMessageBox.warning(self, "Login Error", "Both username and email are required.")
@@ -94,6 +173,7 @@ class RegistrationDialog(QDialog):
 
         # Check if the user exists
         existing_user = collection.find_one({"$or": [{"username": username}, {"email": email}]})
+        progress_dialog.close()
 
         if existing_user:
             # Store the _id in the ID variable
@@ -108,7 +188,18 @@ class RegistrationDialog(QDialog):
         # Close the MongoDB connection
         client.close()
 
+    def show_loading_bar(self):
+        loading_dialog = LoadingDialog(self)
+        loading_dialog.show()
 
+        # Create a worker thread for the time-consuming task
+        self.worker = Worker()
+        self.worker.progress_changed.connect(loading_dialog.set_progress)
+        self.worker.label_changed.connect(loading_dialog.set_progress_label)
+        self.worker.finished.connect(loading_dialog.close)
+
+        # Start the worker thread
+        self.worker.start()
 
 
 class WebBrowser(QMainWindow):
@@ -170,11 +261,10 @@ class WebBrowser(QMainWindow):
         view_downloads_btn.triggered.connect(self.view_downloads)
         nav_toolbar.addAction(view_downloads_btn)
 
+        # Create a list widget to display downloaded files
         self.downloads_list = QListWidget()
         self.downloads_list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.downloads_list.itemDoubleClicked.connect(self.open_selected_download)
-
-        self.downloads_list = QListWidget()  # Create a list widget to display downloaded files
 
         self.browser.urlChanged.connect(self.update_urlbar)
         self.status = QStatusBar()
@@ -210,9 +300,8 @@ class WebBrowser(QMainWindow):
             QMessageBox.information(self, "Page Loaded", f"The page has finished loading. User ID: {self.ID}")
 
     def view_downloads(self):
-        # Create a dialog to display downloaded files
-        print("Hello")
-
+        self.show_loading_bar()
+        
         dialog = QDialog(self)
         dialog.setWindowTitle("Downloads")
 
@@ -255,7 +344,7 @@ class WebBrowser(QMainWindow):
         if selected_item:
             file_path = selected_item.text()
             storage_dir = 'storage'
-            file_path = os.path.join(storage_dir, file_path)
+            file_path = os.path.join(file_path)
             print("2")
             if os.path.exists(file_path):
                 file_extension = self.get_file_extension(file_path)
@@ -273,22 +362,34 @@ class WebBrowser(QMainWindow):
     def get_file_extension(self, file_path):
         return os.path.splitext(file_path)[1][1:].lower()
 
-    # def open_pdf(self, file_path):
-    #     # Open PDF files using PyMuPDF
-    #     try:
-    #         pdf_document = fitz.open(file_path)
-    #         pdf_page = pdf_document.load_page(0)
-    #         image = pdf_page.get_pixmap()
-    #         image.save("temp_image.png", "png")
-    #         pdf_document.close()
-    #
-    #         # Open the temporary image file
-    #         QDesktopServices.openUrl(QUrl.fromLocalFile("temp_image.png"))
-    #     except Exception as e:
-    #         QMessageBox.warning(self, "Error Opening PDF", f"Error opening PDF: {str(e)}")
+    def open_pdf(self, file_path):
+        # Open PDF files using PyMuPDF
+        try:
+            pdf_document = fitz.open(file_path)
+            pdf_page = pdf_document.load_page(0)
+            image = pdf_page.get_pixmap()
+            image.save("temp_image.png", "png")
+            pdf_document.close()
+
+            # Open the temporary image file
+            QDesktopServices.openUrl(QUrl.fromLocalFile("temp_image.png"))
+        except Exception as e:
+            QMessageBox.warning(self, "Error Opening PDF", f"Error opening PDF: {str(e)}")
 
     def open_image(self, file_path):
         # Open image files using Pillow
+        progress_dialog = QProgressDialog("Opening...", None, 0, 0, self)
+        progress_dialog.setWindowModality(Qt.WindowModal)
+        progress_dialog.show()
+
+        # Call your login function in a separate thread or process
+        # For simplicity, let's simulate a delay using QEventLoop
+        loop = QEventLoop()
+        QTimer.singleShot(2000, loop.quit)
+        loop.exec_()
+
+        # Close the progress dialog
+        progress_dialog.close()
         print("pic")
         try:
             img = Image.open(file_path)
@@ -349,6 +450,19 @@ class WebBrowser(QMainWindow):
             return base64_data
         except Exception as e:
             return None
+
+    def show_loading_bar(self):
+        loading_dialog = LoadingDialog(self)
+        loading_dialog.show()
+
+        # Create a worker thread for the time-consuming task
+        self.worker = Worker()
+        self.worker.progress_changed.connect(loading_dialog.set_progress)
+        self.worker.label_changed.connect(loading_dialog.set_progress_label)
+        self.worker.finished.connect(loading_dialog.close)
+
+        # Start the worker thread
+        self.worker.start()
 
 
 def main():
