@@ -335,15 +335,38 @@ class WebBrowser(QMainWindow):
         # In this example, we assume that if a user is registered, a file named "user.txt" exists.
         return os.path.exists("user.txt")
 
+    # def page_loaded_alert(self, ok):
+    #     current_url = self.browser.url().toString()
+    #     if ok and current_url == "https://abc.com/":
+    #         QMessageBox.information(self, "Page Loaded", "abc.com has finished loading.1")
+
     def navigate_to_url(self):
-        q = QUrl(self.urlbar.text())
+        url = self.urlbar.text()
+        q = QUrl(url)
         if q.scheme() == "":
             q.setScheme("http")
-        self.browser.setUrl(q)
+
+        # Check if the loaded URL's host is "127.0.0.1" and port is 5000
+        if q.host() == "127.0.0.1" and q.port() == 5000:
+            # Show a confirmation dialog
+            reply = QMessageBox.question(self, 'Confirmation', 'Do you want to load http://127.0.0.1:5000?', QMessageBox.Yes | QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                key = "123456"
+
+                # Construct the URL with the key
+                url = f"http://127.0.0.1:5000/?key={key}"
+                w = QUrl(url)
+                self.browser.setUrl(w)
+        else:
+            self.browser.setUrl(q)
 
     def update_urlbar(self, q):
         self.urlbar.setText(q.toString())
         self.urlbar.setCursorPosition(0)
+
+        # Check if the loaded URL's host is "127.0.0.1" and port is 5000
+        if q.host() == "127.0.0.1" and q.port() == 5000:
+            QMessageBox.information(self, "Page Loaded", "http://127.0.0.1:5000/ has finished loading.")
 
     def page_loaded_alert(self, ok):
         if ok:
